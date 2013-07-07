@@ -1,0 +1,19 @@
+<package>
+  <description brief="pan_tilt_cvtrack">
+
+     pan_tilt_cvtrack
+
+  </description>
+  <author>youbot</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/pan_tilt_cvtrack</url>
+  <depend package="dynamixel_controllers"/>
+  <depend package="cv_bridge"/>
+  <depend package="opencv2"/>
+  <depend package="uvc_cam"/>
+  <depend package="roscpp"/>
+
+</package>
+
+
