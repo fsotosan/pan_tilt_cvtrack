@@ -11,42 +11,54 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <ros/ros.h>
 
-#define MIN_AREA 400
+#define MIN_AREA 1000
 
 using namespace cv;
 using namespace std;
 
-RNG rng(12345);
-int lastX = -1;
-int lastY = -1;
-
 Mat coloredBallFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
-void trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV);
+Mat trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outCentro, float* outArea);
 
 
 int main( int argc, char** argv ) {
 
 	VideoCapture theCapture(1);
 	Mat theFrame;
+	Mat theFilteredFrame;
+	Point2f theCentro;
+	float theArea = 0.0;
 
 	// Rangos de representación HSV en OpenCV: 0<=H<=180, 0<=S<=255, 0<=V<=255
 	// http://www.colorpicker.com/
 
+	/*
 	Scalar HSV_NARANJA_MIN(32*180/360,60*255/100,75*255/100);
 	Scalar HSV_NARANJA_MAX(37*180/360,255,255);
+	*/
+
+	Scalar HSV_NARANJA_MIN(30*180/360,30*255/100,25*255/100);
+	Scalar HSV_NARANJA_MAX(44*180/360,90*255/100,90*255/100);
 
 	if(!theCapture.isOpened()) {
 		cout << "Error abriendo captura de imagen" << endl;
 		return -1;
 	}
 
+	namedWindow("Video",CV_WINDOW_AUTOSIZE);
+	namedWindow("Ball",CV_WINDOW_AUTOSIZE);
+
 	while(1) {
 
 		theCapture >> theFrame;
 
-		trackBall(&theFrame, HSV_NARANJA_MIN, HSV_NARANJA_MAX);
+		theFilteredFrame = trackBall(&theFrame, HSV_NARANJA_MIN, HSV_NARANJA_MAX,&theCentro,&theArea);
 
-		cout << "X: " << lastX << ", Y: " << lastY << endl;
+		cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
+
+		imshow("Video", theFrame);
+		imshow("Ball", theFilteredFrame);
+
+		waitKey();
 
 	}
 
@@ -74,7 +86,7 @@ Mat coloredBallFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV
 
 	// Definimos kernel para operación de dilatación
 
-	Mat element = getStructuringElement(MORPH_ELLIPSE, Size(25, 25));
+	Mat element = getStructuringElement(MORPH_ELLIPSE, Size(30, 30));
 
 	// Invertir
 	//bitwise_not(redBallOnly, redBallOnly);
@@ -91,7 +103,7 @@ Mat coloredBallFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV
 
 }
 
-void trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV) {
+Mat trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outCentro, float* outArea) {
 
 
 	// Aplicamos filtro de búsqueda de bolas rojas
@@ -108,48 +120,28 @@ void trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV) {
 	// Comprobamos el número de contornos detectados.
 	// En caso de haber más de uno nos quedamos con el de mayor área
 
-	float area = 0.0;
-	Moments mu;
-	Point2f mc;
+	CvMoments m;
+
 	int contourNum = 0;
-	double moment10 = mu(1);
-	double moment01 = mu(2);
+	*outArea = 0.0;
 
 	for( int i = 0; i < contours.size(); i++ ) {
 		float tmpArea = contourArea(contours[i]);
-		if (tmpArea > area) {
+		if (tmpArea > *outArea) {
 			contourNum = i;
-			area = tmpArea;
+			*outArea = tmpArea;
 		}
 	}
 
 	// Obtenemos el centro de masa a partir del vector de momentos
 
-	if (area > MIN_AREA) {
-		mu = moments(contours[contourNum], false);
-		mc = Point2f( mu.m10/mu.m00 , mu.m01/mu.m00 );
-
-		lastX = moment10/area;
-		lastY = moment01/area;
-
-		/*
-		// Representamos el contorno
-
-		Mat drawing = Mat::zeros(redOnly.size(), CV_8UC3 );
-		Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
-		drawContours( drawing, contours, contourNum, color, 2, 8, hierarchy, 0, Point() );
-		circle( drawing, mc, 4, color, -1, 8, 0 );
-
-		namedWindow( "Contours", CV_WINDOW_AUTOSIZE );
-		imshow( "Contours", drawing );
-		*/
-
-
+	if (*outArea > MIN_AREA) {
+		m = moments(contours[contourNum], false);
+		*outCentro = Point2f(m.m10/m.m00,m.m01/m.m00);
 	} else {
-
-		lastX = -1;
-		lastY = -1;
-
+		*outCentro = Point2f(-1,-1);
 	}
+
+	return redOnly;
 
 }
