@@ -1,13 +1,14 @@
 /*
  * Programa para seguir una bola de color.
  * Autor: Fernando Soto.
- * A partir de las siguientes referencias y ejemplos:
+ * A partir de las siguientes referencias y ejemplos de código:
  *  - http://opencv-srf.blogspot.com.es/2010/09/object-detection-using-color-seperation.html
  *  - Real-Time Object Tracking Using OpenCV: https://www.youtube.com/watch?v=bSeFrPrqZ2A
  */
 
 #include <stdio.h>
 #include <iostream>
+#include <string>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -21,6 +22,7 @@ using namespace std;
 
 Mat colorFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
 vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outLargestMatchCenter, float* outLargestMatchArea);
+string intToString(int number);
 
 int main( int argc, char** argv ) {
 
@@ -66,7 +68,11 @@ int main( int argc, char** argv ) {
 			line(theFrame,Point(theCentro.x-10, theCentro.y), Point(theCentro.x+10, theCentro.y), theTargetIndicatorColor);
 			line(theFrame,Point(theCentro.x, theCentro.y-10), Point(theCentro.x, theCentro.y+10), theTargetIndicatorColor);
 
-			// Y representamos el contorno de todos los candidatos
+			// Añadimos texto con las coordenadas
+
+			putText(theFrame,intToString(theCentro.x)+","+intToString(theCentro.y),Point(theCentro.x,theCentro.y+30),1,1,Scalar(0,255,0),2);
+
+			// Representamos el contorno de todos los candidatos
 
 			drawContours(theFrame,theBallContours,-1,theTargetIndicatorColor);
 
@@ -179,5 +185,13 @@ vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar i
 	}
 
 	return outContours;
+
+}
+
+string intToString(int number) {
+
+	std::stringstream ss;
+	ss << number;
+	return ss.str();
 
 }
