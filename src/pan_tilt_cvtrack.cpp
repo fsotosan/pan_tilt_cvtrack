@@ -1,7 +1,9 @@
 /*
- * Programa para seguir una bola de color
- * Gran parte del código fuente ha sido extraido de
- * // http://opencv-srf.blogspot.com.es/2010/09/object-detection-using-color-seperation.html
+ * Programa para seguir una bola de color.
+ * Autor: Fernando Soto.
+ * A partir de las siguientes referencias y ejemplos:
+ *  - http://opencv-srf.blogspot.com.es/2010/09/object-detection-using-color-seperation.html
+ *  - Real-Time Object Tracking Using OpenCV: https://www.youtube.com/watch?v=bSeFrPrqZ2A
  */
 
 #include <stdio.h>
@@ -11,30 +13,27 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <ros/ros.h>
 
-#define MIN_AREA 1000
+#define FRAME_HEIGHT	480
+#define FRAME_WIDTH		640
 
 using namespace cv;
 using namespace std;
 
-Mat coloredBallFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
-Mat trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outCentro, float* outArea);
-
+Mat colorFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
+vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outLargestMatchCenter, float* outLargestMatchArea);
 
 int main( int argc, char** argv ) {
 
 	VideoCapture theCapture(1);
 	Mat theFrame;
-	Mat theFilteredFrame;
+	vector< vector<Point> > theBallContours;
 	Point2f theCentro;
 	float theArea = 0.0;
 
+	Scalar theTargetIndicatorColor(0,0,255);
+
 	// Rangos de representación HSV en OpenCV: 0<=H<=180, 0<=S<=255, 0<=V<=255
 	// http://www.colorpicker.com/
-
-	/*
-	Scalar HSV_NARANJA_MIN(32*180/360,60*255/100,75*255/100);
-	Scalar HSV_NARANJA_MAX(37*180/360,255,255);
-	*/
 
 	Scalar HSV_NARANJA_MIN(30*180/360,30*255/100,25*255/100);
 	Scalar HSV_NARANJA_MAX(44*180/360,90*255/100,90*255/100);
@@ -45,18 +44,41 @@ int main( int argc, char** argv ) {
 	}
 
 	namedWindow("Video",CV_WINDOW_AUTOSIZE);
-	namedWindow("Ball",CV_WINDOW_AUTOSIZE);
 
 	while(1) {
 
+		// Obtenemos una imagen
+
 		theCapture >> theFrame;
 
-		theFilteredFrame = trackBall(&theFrame, HSV_NARANJA_MIN, HSV_NARANJA_MAX,&theCentro,&theArea);
+		// Ejecutamos función de detección.
+		// La función devolverá un vector de contornos con todos los candidatos
+		// Las variables theCentro y theArea contienen las coordenadas (en pixeles) del candidato con mayor área
 
-		cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
+		theBallContours = findObjects(&theFrame, HSV_NARANJA_MIN, HSV_NARANJA_MAX,&theCentro,&theArea);
+
+		if (theArea > 0) {
+
+			// Si la detección ha sido satisfactoria
+			// marcamos el objetivo con un círculo y una cruz en el centroide
+
+			circle(theFrame,theCentro,20,theTargetIndicatorColor);
+			line(theFrame,Point(theCentro.x-10, theCentro.y), Point(theCentro.x+10, theCentro.y), theTargetIndicatorColor);
+			line(theFrame,Point(theCentro.x, theCentro.y-10), Point(theCentro.x, theCentro.y+10), theTargetIndicatorColor);
+
+			// Y representamos el contorno de todos los candidatos
+
+			drawContours(theFrame,theBallContours,-1,theTargetIndicatorColor);
+
+			cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
+
+		}
+
+		// Mostramos por pantalla la imagen modificada con la información de detección
 
 		imshow("Video", theFrame);
-		imshow("Ball", theFilteredFrame);
+
+		// Pausa hasta que el usuario pulse tecla
 
 		waitKey();
 
@@ -66,82 +88,96 @@ int main( int argc, char** argv ) {
 
 }
 
+Mat colorFilter(const Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV) {
 
-
-Mat coloredBallFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV) {
-
-	Mat hsv, redBallOnly;
+	Mat theHsvFrame, outThresholdedFrame;
 
 	// Comprobamos que el formato de imagen es el esperado
 
-	assert(src->type() == CV_8UC3);
+	assert(inFrame->type() == CV_8UC3);
 
 	// Obtenemos la representación HSV de la imagen BGR (ojo, BGR y no RGB!!)
+	// ya que HSV presenta mejores características para operaciones de filtrado de color
 
-	cvtColor(*src,hsv,CV_BGR2HSV);
+	cvtColor(*inFrame,theHsvFrame,CV_BGR2HSV);
 
 	// Filtrado en HSV
 
-	inRange(hsv, inColorMinHSV, inColorMaxHSV, redBallOnly);
+	inRange(theHsvFrame, inColorMinHSV, inColorMaxHSV, outThresholdedFrame);
 
-	// Definimos kernel para operación de dilatación
+	// Definimos kernel para operaciones de erosión y dilatación
+	// Los elementos rectangulares implican menor carga computacional
 
-	Mat element = getStructuringElement(MORPH_ELLIPSE, Size(30, 30));
+	Mat theErodeElement = getStructuringElement(MORPH_RECT, Size(3, 3));
+	Mat theDilateElement = getStructuringElement(MORPH_RECT, Size(8, 8));
 
 	// Invertir
-	//bitwise_not(redBallOnly, redBallOnly);
+	//bitwise_not(theThresholdedFrame, theThresholdedFrame);
 
-	// Erosión
+	// Erosión.
+	// Eliminamos el ruido (conicidencias dispersas y aisladas de pequeño tamaño)
 
-	erode(redBallOnly, redBallOnly, Mat());
+	erode(outThresholdedFrame, outThresholdedFrame, theErodeElement);
 
 	// Dilatación
+	// Reforzamos las detecciones que han sobrevivido a la erosión
 
-	dilate(redBallOnly, redBallOnly, element);
+	dilate(outThresholdedFrame, outThresholdedFrame, theDilateElement);
 
-	return redBallOnly;
+	return outThresholdedFrame;
 
 }
 
-Mat trackBall(Mat* input, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outCentro, float* outArea) {
+vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outCentro, float* outArea) {
 
+	vector<vector<Point> > outContours;
+	vector<Vec4i> theHierarchy;
+	vector<Point> theLargestTargetContour;
+	CvMoments theMoments;
+	int theTargetContourNum = 0;
+	double theMaxArea = 0.0;
 
-	// Aplicamos filtro de búsqueda de bolas rojas
+	// Aplicamos filtro de búsqueda de bolas del co
 
-	Mat redOnly = coloredBallFilter(input, inColorMinHSV, inColorMaxHSV);
+	Mat theThresholdedImage = colorFilter(inFrame, inColorMinHSV, inColorMaxHSV);
 
-	// Obtenemos el contorno
+	// Buscamos contornos
 
-	vector<vector<Point> > contours;
-	vector<Vec4i> hierarchy;
-
-	findContours(redOnly, contours, hierarchy,CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0) );
+	findContours(theThresholdedImage, outContours, theHierarchy,CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
 
 	// Comprobamos el número de contornos detectados.
-	// En caso de haber más de uno nos quedamos con el de mayor área
+	// En caso de haber más de uno establecemos el blanco en el de mayor área.
+	// Si el número de detecciones es mayor que 5 entendemos que es debido a una detección errónea
 
-	CvMoments m;
+	int theNumObjects = theHierarchy.size();
 
-	int contourNum = 0;
-	*outArea = 0.0;
+	if ((theNumObjects > 0)&&(theNumObjects < 5)) {
 
-	for( int i = 0; i < contours.size(); i++ ) {
-		float tmpArea = contourArea(contours[i]);
-		if (tmpArea > *outArea) {
-			contourNum = i;
-			*outArea = tmpArea;
+		// Iteramos sobre los objetos detectados
+
+		for (int theIndex = 0; theIndex >= 0; theIndex = theHierarchy[theIndex][0]) {
+			float theTmpArea = contourArea(outContours[theIndex]);
+			if (theTmpArea > theMaxArea) {
+				theTargetContourNum = theIndex;
+				theMaxArea = theTmpArea;
+			}
 		}
 	}
 
-	// Obtenemos el centro de masa a partir del vector de momentos
+	// Si se ha seleccionado un objetivo con un area aceptable (area de la imagen entre 32)
+	// obtenemos su centro de masa a partir del vector de momentos
+	// Si no, devolvemos area 0 y punto -1,-1 para indicar que no consideramos detección
 
-	if (*outArea > MIN_AREA) {
-		m = moments(contours[contourNum], false);
-		*outCentro = Point2f(m.m10/m.m00,m.m01/m.m00);
+	if (theMaxArea > FRAME_HEIGHT*FRAME_WIDTH/32) {
+		theLargestTargetContour = outContours[theTargetContourNum];
+		theMoments = moments(theLargestTargetContour, false);
+		*outCentro = Point2f(theMoments.m10/theMoments.m00,theMoments.m01/theMoments.m00);
+		*outArea = theMaxArea;
 	} else {
 		*outCentro = Point2f(-1,-1);
+		*outArea = 0.0;
 	}
 
-	return redOnly;
+	return outContours;
 
 }
