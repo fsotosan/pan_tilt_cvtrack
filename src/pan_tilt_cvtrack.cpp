@@ -13,6 +13,9 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <ros/ros.h>
+#include <std_msgs/Float64.h>
+
+#define PI 				3.1415927
 
 #define FRAME_HEIGHT	480
 #define FRAME_WIDTH		640
@@ -27,14 +30,16 @@ string intToString(int number);
 Scalar HsvMin;
 Scalar HsvMax;
 
+std_msgs::Float64 thePanMsg, theTiltMsg;
+
 // Funciones callback para ajuste de límites por pantalla
 
-void onHsvHMin(int theSliderValue,void*) { HsvMin[0] = theSliderValue; }
-void onHsvHMax(int theSliderValue,void*) { HsvMax[0] = theSliderValue; }
-void onHsvSMin(int theSliderValue,void*) { HsvMin[1] = theSliderValue; }
-void onHsvSMax(int theSliderValue,void*) { HsvMax[1] = theSliderValue; }
-void onHsvVMin(int theSliderValue,void*) { HsvMin[2] = theSliderValue; }
-void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue; }
+void onHsvHMin(int theSliderValue,void*) { HsvMin[0] = theSliderValue*180/360; }
+void onHsvHMax(int theSliderValue,void*) { HsvMax[0] = theSliderValue*180/360; }
+void onHsvSMin(int theSliderValue,void*) { HsvMin[1] = theSliderValue*255/100; }
+void onHsvSMax(int theSliderValue,void*) { HsvMax[1] = theSliderValue*255/100; }
+void onHsvVMin(int theSliderValue,void*) { HsvMin[2] = theSliderValue*255/100; }
+void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue*255/100; }
 
 int main( int argc, char** argv ) {
 
@@ -62,23 +67,30 @@ int main( int argc, char** argv ) {
 		return -1;
 	}
 
+	ros::init(argc, argv, "pan_tilt_ptu_46");
+	ros::NodeHandle theNodeHandle;
+	ros::Publisher theTiltPublisher = theNodeHandle.advertise<std_msgs::Float64>("/tilt_joint/command",10);
+	ros::Publisher thePanPublisher = theNodeHandle.advertise<std_msgs::Float64>("/pan_joint/command",10);
+
 	namedWindow("Video",CV_WINDOW_AUTOSIZE);
 
-	createTrackbar("H min", "Video", NULL, 180, &onHsvHMin);
-	createTrackbar("H max", "Video", NULL, 180, &onHsvHMax);
-	createTrackbar("S min", "Video", NULL, 255, &onHsvSMin);
-	createTrackbar("S max", "Video", NULL, 255, &onHsvSMax);
-	createTrackbar("V min", "Video", NULL, 255, &onHsvVMin);
-	createTrackbar("V max", "Video", NULL, 255, &onHsvVMax);
+	createTrackbar("H min", "Video", NULL, 360, &onHsvHMin);
+	createTrackbar("H max", "Video", NULL, 360, &onHsvHMax);
+	createTrackbar("S min", "Video", NULL, 100, &onHsvSMin);
+	createTrackbar("S max", "Video", NULL, 100, &onHsvSMax);
+	createTrackbar("V min", "Video", NULL, 100, &onHsvVMin);
+	createTrackbar("V max", "Video", NULL, 100, &onHsvVMax);
 
-	setTrackbarPos("H min", "Video", (int)HsvMin[0]);
-	setTrackbarPos("H max", "Video", (int)HsvMax[0]);
-	setTrackbarPos("S min", "Video", (int)HsvMin[1]);
-	setTrackbarPos("S max", "Video", (int)HsvMax[1]);
-	setTrackbarPos("V min", "Video", (int)HsvMin[2]);
-	setTrackbarPos("V max", "Video", (int)HsvMax[2]);
+	setTrackbarPos("H min", "Video", (int)HsvMin[0]*360/180);
+	setTrackbarPos("H max", "Video", (int)HsvMax[0]*360/180);
+	setTrackbarPos("S min", "Video", (int)HsvMin[1]*100/255);
+	setTrackbarPos("S max", "Video", (int)HsvMax[1]*100/255);
+	setTrackbarPos("V min", "Video", (int)HsvMin[2]*100/255);
+	setTrackbarPos("V max", "Video", (int)HsvMax[2]*100/255);
 
-	while(1) {
+	ros::Rate r(10); // 10 hz
+
+	while(theNodeHandle.ok()) {
 
 		// Obtenemos una imagen
 
@@ -110,6 +122,18 @@ int main( int argc, char** argv ) {
 
 			//cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
 
+			if (abs(theCentro.x - FRAME_WIDTH/2) > 20) {
+				thePanMsg.data = (theCentro.x - FRAME_WIDTH/2)*(0.5*PI/FRAME_WIDTH);
+				cout << "Publishing Pan " << thePanMsg.data << endl;
+				thePanPublisher.publish(thePanMsg);
+			}
+
+			if (abs(theCentro.y - FRAME_HEIGHT) > 20) {
+				theTiltMsg.data = (theCentro.y - FRAME_HEIGHT/2)*(0.5*PI/FRAME_HEIGHT);
+				cout << "Publishing Tilt " << thePanMsg.data << endl;
+				theTiltPublisher.publish(theTiltMsg);
+			}
+
 		}
 
 		// Mostramos por pantalla la imagen modificada con la información de detección
@@ -121,6 +145,8 @@ int main( int argc, char** argv ) {
 		// Pausa hasta que el usuario pulse tecla
 
 		waitKey(20);
+
+		ros::spinOnce();
 
 	}
 
@@ -193,7 +219,8 @@ vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar i
 
 	int theNumObjects = theHierarchy.size();
 
-	if ((theNumObjects > 0)&&(theNumObjects < 5)) {
+	//if ((theNumObjects > 0)&&(theNumObjects < 15)) {
+	if ((theNumObjects > 0)) {
 
 		// Iteramos sobre los objetos detectados
 
