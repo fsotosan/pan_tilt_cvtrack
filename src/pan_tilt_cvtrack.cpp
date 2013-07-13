@@ -24,6 +24,18 @@ Mat colorFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
 vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outLargestMatchCenter, float* outLargestMatchArea);
 string intToString(int number);
 
+Scalar HsvMin;
+Scalar HsvMax;
+
+// Funciones callback para ajuste de límites por pantalla
+
+void onHsvHMin(int theSliderValue,void*) { HsvMin[0] = theSliderValue; }
+void onHsvHMax(int theSliderValue,void*) { HsvMax[0] = theSliderValue; }
+void onHsvSMin(int theSliderValue,void*) { HsvMin[1] = theSliderValue; }
+void onHsvSMax(int theSliderValue,void*) { HsvMax[1] = theSliderValue; }
+void onHsvVMin(int theSliderValue,void*) { HsvMin[2] = theSliderValue; }
+void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue; }
+
 int main( int argc, char** argv ) {
 
 	VideoCapture theCapture(1);
@@ -32,13 +44,18 @@ int main( int argc, char** argv ) {
 	Point2f theCentro;
 	float theArea = 0.0;
 
-	Scalar theTargetIndicatorColor(0,0,255);
+	Scalar theTargetIndicatorColor(255,0,00); // BGR Azul
 
 	// Rangos de representación HSV en OpenCV: 0<=H<=180, 0<=S<=255, 0<=V<=255
 	// http://www.colorpicker.com/
 
-	Scalar HSV_NARANJA_MIN(30*180/360,30*255/100,25*255/100);
-	Scalar HSV_NARANJA_MAX(44*180/360,90*255/100,90*255/100);
+	HsvMin[0] = 4;		// H min
+	HsvMin[1] = 34;		// S min
+	HsvMin[2] = 169;	// V min
+
+	HsvMax[0] = 18;		// H min
+	HsvMax[1] = 218;	// S min
+	HsvMax[2] = 255;	// V min
 
 	if(!theCapture.isOpened()) {
 		cout << "Error abriendo captura de imagen" << endl;
@@ -46,6 +63,20 @@ int main( int argc, char** argv ) {
 	}
 
 	namedWindow("Video",CV_WINDOW_AUTOSIZE);
+
+	createTrackbar("H min", "Video", NULL, 180, &onHsvHMin);
+	createTrackbar("H max", "Video", NULL, 180, &onHsvHMax);
+	createTrackbar("S min", "Video", NULL, 255, &onHsvSMin);
+	createTrackbar("S max", "Video", NULL, 255, &onHsvSMax);
+	createTrackbar("V min", "Video", NULL, 255, &onHsvVMin);
+	createTrackbar("V max", "Video", NULL, 255, &onHsvVMax);
+
+	setTrackbarPos("H min", "Video", (int)HsvMin[0]);
+	setTrackbarPos("H max", "Video", (int)HsvMax[0]);
+	setTrackbarPos("S min", "Video", (int)HsvMin[1]);
+	setTrackbarPos("S max", "Video", (int)HsvMax[1]);
+	setTrackbarPos("V min", "Video", (int)HsvMin[2]);
+	setTrackbarPos("V max", "Video", (int)HsvMax[2]);
 
 	while(1) {
 
@@ -57,7 +88,8 @@ int main( int argc, char** argv ) {
 		// La función devolverá un vector de contornos con todos los candidatos
 		// Las variables theCentro y theArea contienen las coordenadas (en pixeles) del candidato con mayor área
 
-		theBallContours = findObjects(&theFrame, HSV_NARANJA_MIN, HSV_NARANJA_MAX,&theCentro,&theArea);
+
+		theBallContours = findObjects(&theFrame, HsvMin, HsvMax,&theCentro,&theArea);
 
 		if (theArea > 0) {
 
@@ -76,7 +108,7 @@ int main( int argc, char** argv ) {
 
 			drawContours(theFrame,theBallContours,-1,theTargetIndicatorColor);
 
-			cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
+			//cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
 
 		}
 
@@ -84,9 +116,11 @@ int main( int argc, char** argv ) {
 
 		imshow("Video", theFrame);
 
+
+
 		// Pausa hasta que el usuario pulse tecla
 
-		waitKey();
+		waitKey(20);
 
 	}
 
@@ -123,12 +157,14 @@ Mat colorFilter(const Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV) 
 	// Erosión.
 	// Eliminamos el ruido (conicidencias dispersas y aisladas de pequeño tamaño)
 
-	erode(outThresholdedFrame, outThresholdedFrame, theErodeElement);
+	for(int i=0;i<2;i++)
+		erode(outThresholdedFrame, outThresholdedFrame, theErodeElement);
 
 	// Dilatación
 	// Reforzamos las detecciones que han sobrevivido a la erosión
 
-	dilate(outThresholdedFrame, outThresholdedFrame, theDilateElement);
+	for(int i=0;i<2;i++)
+		dilate(outThresholdedFrame, outThresholdedFrame, theDilateElement);
 
 	return outThresholdedFrame;
 
@@ -170,11 +206,11 @@ vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar i
 		}
 	}
 
-	// Si se ha seleccionado un objetivo con un area aceptable (area de la imagen entre 32)
+	// Si se ha seleccionado un objetivo con un area aceptable (area de la imagen entre 64)
 	// obtenemos su centro de masa a partir del vector de momentos
 	// Si no, devolvemos area 0 y punto -1,-1 para indicar que no consideramos detección
 
-	if (theMaxArea > FRAME_HEIGHT*FRAME_WIDTH/32) {
+	if (theMaxArea > FRAME_HEIGHT*FRAME_WIDTH/64) {
 		theLargestTargetContour = outContours[theTargetContourNum];
 		theMoments = moments(theLargestTargetContour, false);
 		*outCentro = Point2f(theMoments.m10/theMoments.m00,theMoments.m01/theMoments.m00);

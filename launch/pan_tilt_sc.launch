@@ -1,0 +1,11 @@
+<launch>
+    <!-- Start joint controller -->
+    <rosparam file="$(find pan_tilt_cvtrack)/pan_tilt.yaml" command="load"/>
+    <node name="pan_tilt_controller_spawner" pkg="dynamixel_controllers" type="controller_spawner.py"
+          args="--manager=dxl_manager
+                --port pan_tilt_port
+                --type=simple
+                pan_joint
+                tilt_joint"
+          output="screen"/>
+</launch>
