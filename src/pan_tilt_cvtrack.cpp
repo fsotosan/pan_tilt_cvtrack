@@ -20,6 +20,8 @@
 #define FRAME_HEIGHT	480
 #define FRAME_WIDTH		640
 
+#define CALIBRATION_FILE_PATH "../camera.yaml"
+
 using namespace cv;
 using namespace std;
 
@@ -44,15 +46,36 @@ void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue*255/100; }
 int main( int argc, char** argv ) {
 
 	VideoCapture theCapture(1);
-	Mat theFrame;
+	Mat theFrame, theUndistortedFrame;
 	vector< vector<Point> > theBallContours;
 	Point2f theCentro;
 	float theArea = 0.0;
 
+	// Leemos los parámetros intrínsecos de la cámara
+	// y los coeficientes de distorsión del archivo de calibración
+
+	/*
+	// Problema con el formato generado por ROS.
+	// No coincide con el esperado por OpenCV a través de FileStorage
+
+	Mat theCameraMatrix, theDistCoeffs;
+	FileStorage theCalibrationFile(CALIBRATION_FILE_PATH, FileStorage::READ);
+	theCalibrationFile["cameraMatrix"] >> theCameraMatrix;
+	theCalibrationFile["distCoeffs"] >> theDistCoeffs;
+	theCalibrationFile.release();
+	*/
+
+	float theCM[] = {1247.1132043625, 0, 268.031780862028, 0, 1245.77083050807, 197.854525292817, 0, 0, 1};
+	float theDC[] = {0.156027008694038, 0.414861176927745, -0.00461630436049559, -0.012986972246621, 0};
+	float thePC[] = {1268.92993164062, 0, 265.47622626249, 0, 0, 1268.49304199219, 197.223631488687, 0, 0, 0, 1, 0};
+
+	Mat theCameraMatrix =  Mat(3, 3, CV_32F, theCM).clone();
+	Mat theDistCoeffs = Mat(1, 5, CV_32F, theDC).clone();
+	Mat theProjectionMatrix = Mat(3, 4, CV_32F, thePC).clone();
+
 	Scalar theTargetIndicatorColor(255,0,00); // BGR Azul
 
 	// Rangos de representación HSV en OpenCV: 0<=H<=180, 0<=S<=255, 0<=V<=255
-	// http://www.colorpicker.com/
 
 	HsvMin[0] = 4;		// H min
 	HsvMin[1] = 34;		// S min
@@ -96,49 +119,60 @@ int main( int argc, char** argv ) {
 
 		theCapture >> theFrame;
 
+		// Corregimos la imagen a partir de los parámetros de calibración conocidos
+
+		undistort(theFrame, theUndistortedFrame, theCameraMatrix, theDistCoeffs);
+
 		// Ejecutamos función de detección.
 		// La función devolverá un vector de contornos con todos los candidatos
 		// Las variables theCentro y theArea contienen las coordenadas (en pixeles) del candidato con mayor área
 
 
-		theBallContours = findObjects(&theFrame, HsvMin, HsvMax,&theCentro,&theArea);
+		theBallContours = findObjects(&theUndistortedFrame, HsvMin, HsvMax,&theCentro,&theArea);
 
 		if (theArea > 0) {
 
 			// Si la detección ha sido satisfactoria
 			// marcamos el objetivo con un círculo y una cruz en el centroide
 
-			circle(theFrame,theCentro,20,theTargetIndicatorColor);
+			circle(theFrame,theCentro,sqrt(theArea/PI),theTargetIndicatorColor);
 			line(theFrame,Point(theCentro.x-10, theCentro.y), Point(theCentro.x+10, theCentro.y), theTargetIndicatorColor);
 			line(theFrame,Point(theCentro.x, theCentro.y-10), Point(theCentro.x, theCentro.y+10), theTargetIndicatorColor);
 
 			// Añadimos texto con las coordenadas
 
-			putText(theFrame,intToString(theCentro.x)+","+intToString(theCentro.y),Point(theCentro.x,theCentro.y+30),1,1,Scalar(0,255,0),2);
+			putText(theUndistortedFrame,intToString(theCentro.x)+","+intToString(theCentro.y),Point(theCentro.x,theCentro.y+30),1,1,Scalar(0,255,0),2);
 
 			// Representamos el contorno de todos los candidatos
 
-			drawContours(theFrame,theBallContours,-1,theTargetIndicatorColor);
+			drawContours(theUndistortedFrame,theBallContours,-1,theTargetIndicatorColor);
 
 			//cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
 
-			if (abs(theCentro.x - FRAME_WIDTH/2) > 20) {
-				thePanMsg.data = (theCentro.x - FRAME_WIDTH/2)*(0.5*PI/FRAME_WIDTH);
+			// Tratar de entender cómo obtener la corrección en radianes
+			// http://stackoverflow.com/questions/13957150/opencv-computing-camera-position-rotation
+
+			if (abs(FRAME_WIDTH/2 - theCentro.x) > 0) {
+				thePanMsg.data = (FRAME_WIDTH/2 - theCentro.x)*(0.2*PI/FRAME_WIDTH);
 				cout << "Publishing Pan " << thePanMsg.data << endl;
 				thePanPublisher.publish(thePanMsg);
 			}
 
-			if (abs(theCentro.y - FRAME_HEIGHT) > 20) {
-				theTiltMsg.data = (theCentro.y - FRAME_HEIGHT/2)*(0.5*PI/FRAME_HEIGHT);
+
+			if (abs(FRAME_HEIGHT/2 - theCentro.y) > 0) {
+				theTiltMsg.data = -(FRAME_HEIGHT/2 - theCentro.y)*(0.2*PI/FRAME_HEIGHT);
 				cout << "Publishing Tilt " << thePanMsg.data << endl;
 				theTiltPublisher.publish(theTiltMsg);
 			}
+
+			usleep(100000);
+
 
 		}
 
 		// Mostramos por pantalla la imagen modificada con la información de detección
 
-		imshow("Video", theFrame);
+		imshow("Video", theUndistortedFrame);
 
 
 
@@ -237,7 +271,7 @@ vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar i
 	// obtenemos su centro de masa a partir del vector de momentos
 	// Si no, devolvemos area 0 y punto -1,-1 para indicar que no consideramos detección
 
-	if (theMaxArea > FRAME_HEIGHT*FRAME_WIDTH/64) {
+	if (theMaxArea > FRAME_HEIGHT*FRAME_WIDTH/128) {
 		theLargestTargetContour = outContours[theTargetContourNum];
 		theMoments = moments(theLargestTargetContour, false);
 		*outCentro = Point2f(theMoments.m10/theMoments.m00,theMoments.m01/theMoments.m00);
