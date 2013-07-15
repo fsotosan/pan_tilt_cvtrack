@@ -28,6 +28,7 @@ using namespace std;
 Mat colorFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
 vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outLargestMatchCenter, float* outLargestMatchArea);
 string intToString(int number);
+string floatToString(float number);
 
 Scalar HsvMin;
 Scalar HsvMax;
@@ -43,10 +44,12 @@ void onHsvSMax(int theSliderValue,void*) { HsvMax[1] = theSliderValue*255/100; }
 void onHsvVMin(int theSliderValue,void*) { HsvMin[2] = theSliderValue*255/100; }
 void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue*255/100; }
 
+int theFrameCounter = 0;
+
 int main( int argc, char** argv ) {
 
 	VideoCapture theCapture(1);
-	Mat theFrame, theUndistortedFrame;
+	Mat theFrame, theFrame2;
 	vector< vector<Point> > theBallContours;
 	Point2f theCentro;
 	float theArea = 0.0;
@@ -73,6 +76,13 @@ int main( int argc, char** argv ) {
 	Mat theDistCoeffs = Mat(1, 5, CV_32F, theDC).clone();
 	Mat theProjectionMatrix = Mat(3, 4, CV_32F, thePC).clone();
 
+	float fx = theCameraMatrix.at<float>(0,0);
+	float fy = theCameraMatrix.at<float>(1,1);
+	float cx = theCameraMatrix.at<float>(0,2);
+	float cy = theCameraMatrix.at<float>(1,2);
+
+	cout << "Parámetros intrínsecos: c=(" << cx << "," << cy << "), fx=" << fx << ", fy=" << fy << endl;
+
 	Scalar theTargetIndicatorColor(255,0,00); // BGR Azul
 
 	// Rangos de representación HSV en OpenCV: 0<=H<=180, 0<=S<=255, 0<=V<=255
@@ -95,6 +105,14 @@ int main( int argc, char** argv ) {
 	ros::Publisher theTiltPublisher = theNodeHandle.advertise<std_msgs::Float64>("/tilt_joint/command",10);
 	ros::Publisher thePanPublisher = theNodeHandle.advertise<std_msgs::Float64>("/pan_joint/command",10);
 
+	thePanMsg.data = 0.0;
+	thePanPublisher.publish(thePanMsg);
+
+	theTiltMsg.data = 0.0;
+	theTiltPublisher.publish(theTiltMsg);
+
+	usleep(500000);
+
 	namedWindow("Video",CV_WINDOW_AUTOSIZE);
 
 	createTrackbar("H min", "Video", NULL, 360, &onHsvHMin);
@@ -104,12 +122,12 @@ int main( int argc, char** argv ) {
 	createTrackbar("V min", "Video", NULL, 100, &onHsvVMin);
 	createTrackbar("V max", "Video", NULL, 100, &onHsvVMax);
 
-	setTrackbarPos("H min", "Video", (int)HsvMin[0]*360/180);
-	setTrackbarPos("H max", "Video", (int)HsvMax[0]*360/180);
-	setTrackbarPos("S min", "Video", (int)HsvMin[1]*100/255);
-	setTrackbarPos("S max", "Video", (int)HsvMax[1]*100/255);
-	setTrackbarPos("V min", "Video", (int)HsvMin[2]*100/255);
-	setTrackbarPos("V max", "Video", (int)HsvMax[2]*100/255);
+	setTrackbarPos("H min", "Video", 213);
+	setTrackbarPos("H max", "Video", 322);
+	setTrackbarPos("S min", "Video", 12);
+	setTrackbarPos("S max", "Video", 98);
+	setTrackbarPos("V min", "Video", 17);
+	setTrackbarPos("V max", "Video", 100);
 
 	ros::Rate r(10); // 10 hz
 
@@ -117,70 +135,106 @@ int main( int argc, char** argv ) {
 
 		// Obtenemos una imagen
 
-		theCapture >> theFrame;
+		theCapture >> theFrame2;
 
 		// Corregimos la imagen a partir de los parámetros de calibración conocidos
 
-		undistort(theFrame, theUndistortedFrame, theCameraMatrix, theDistCoeffs);
+		//undistort(theFrame2, theFrame, theCameraMatrix, theDistCoeffs);
+		theFrame = theFrame2.clone();
 
 		// Ejecutamos función de detección.
 		// La función devolverá un vector de contornos con todos los candidatos
 		// Las variables theCentro y theArea contienen las coordenadas (en pixeles) del candidato con mayor área
 
 
-		theBallContours = findObjects(&theUndistortedFrame, HsvMin, HsvMax,&theCentro,&theArea);
+		theBallContours = findObjects(&theFrame, HsvMin, HsvMax,&theCentro,&theArea);
 
 		if (theArea > 0) {
 
 			// Si la detección ha sido satisfactoria
 			// marcamos el objetivo con un círculo y una cruz en el centroide
 
-			circle(theFrame,theCentro,sqrt(theArea/PI),theTargetIndicatorColor);
+			//circle(theFrame,theCentro,sqrt(theArea/PI),theTargetIndicatorColor);
+			circle(theFrame,theCentro,20,theTargetIndicatorColor);
 			line(theFrame,Point(theCentro.x-10, theCentro.y), Point(theCentro.x+10, theCentro.y), theTargetIndicatorColor);
 			line(theFrame,Point(theCentro.x, theCentro.y-10), Point(theCentro.x, theCentro.y+10), theTargetIndicatorColor);
 
+			// Señalar el centro cx,cy con una cruz
+			line(theFrame,Point(cx-10, cy), Point(cx+10, cy), Scalar(0,0,0));
+			line(theFrame,Point(cx, cy-10), Point(cx, cy+10), Scalar(0,0,0));
+			//line(theFrame,Point(FRAME_WIDTH/2-10, FRAME_HEIGHT/2), Point(FRAME_WIDTH/2+10, FRAME_HEIGHT/2), Scalar(0,0,0));
+			//line(theFrame,Point(FRAME_WIDTH/2, FRAME_HEIGHT/2-10), Point(FRAME_WIDTH/2, FRAME_HEIGHT/2+10), Scalar(0,0,0));
+
 			// Añadimos texto con las coordenadas
 
-			putText(theUndistortedFrame,intToString(theCentro.x)+","+intToString(theCentro.y),Point(theCentro.x,theCentro.y+30),1,1,Scalar(0,255,0),2);
+			putText(theFrame,intToString(theCentro.x)+","+intToString(theCentro.y),Point(theCentro.x,theCentro.y+30),1,1,Scalar(0,255,0),2);
 
 			// Representamos el contorno de todos los candidatos
 
-			drawContours(theUndistortedFrame,theBallContours,-1,theTargetIndicatorColor);
+			drawContours(theFrame,theBallContours,-1,theTargetIndicatorColor);
 
 			//cout << "X: " << theCentro.x << ", Y: " << theCentro.y << ", area: " << theArea << endl;
 
 			// Tratar de entender cómo obtener la corrección en radianes
 			// http://stackoverflow.com/questions/13957150/opencv-computing-camera-position-rotation
 
-			if (abs(FRAME_WIDTH/2 - theCentro.x) > 0) {
-				thePanMsg.data = (FRAME_WIDTH/2 - theCentro.x)*(0.2*PI/FRAME_WIDTH);
-				cout << "Publishing Pan " << thePanMsg.data << endl;
-				thePanPublisher.publish(thePanMsg);
+
+			// Ajuste de ángulos pan y tilt:
+			// El centro de la imagen (en pixels) viene dado por los parámetros intrínsecos cx y cy
+			// (en caso de no disponer de información de calibración tomaríamos FRAME_WIDTH/2 y FRAME_HEIGHT/2)
+			// La distancia focal (en pixels) viene dado por los parámetros de calibración fx y fy
+
+			// Ajuste del ángulo PAN
+			// a partir de la coordenada X y los parámetros cx y fx: atan2(x-cx,fx)
+
+			// Ajuste del ángulo TILT
+			// a partir de la coordenada Y y los parámetros cy y fx: atan2(y-cy,fy)
+
+			// Limitar a una acción de control cada 10 frames para no saturar el bus de motores
+			if (theFrameCounter >= 10) {
+
+				theFrameCounter = 0;
+
+				if (abs((int)cx - (int)theCentro.x) > 25) {
+					thePanMsg.data = -atan2(theCentro.x-cx,fx);
+					//thePanMsg.data = -atan2(theCentro.x-FRAME_WIDTH/2,fx);
+					//thePanMsg.data = - 0.9*atan2(theCentro.x-FRAME_WIDTH/2,fx);
+					//cout << "Publishing Pan " << thePanMsg.data << endl;
+					putText(theFrame,"PAN: "+floatToString(thePanMsg.data),Point(FRAME_WIDTH/2 - 20, 10),1,1,Scalar(0,255,0),2);
+					thePanPublisher.publish(thePanMsg);
+					usleep(200000);
+
+				}
+
+
+				if (abs((int)cy - (int)theCentro.y) > 25) {
+					theTiltMsg.data = atan2(theCentro.y-cy,fy);
+					//theTiltMsg.data = atan2(theCentro.y-FRAME_HEIGHT/2,fy);
+					//theTiltMsg.data = 0.9*atan2(theCentro.y-FRAME_HEIGHT/2,fy);
+					//cout << "Publishing Tilt " << thePanMsg.data << endl;
+					putText(theFrame,"TILT: "+floatToString(thePanMsg.data),Point(10,FRAME_HEIGHT/2 - 20),1,1,Scalar(0,255,0),2);
+					theTiltPublisher.publish(theTiltMsg);
+					//usleep(100000);
+
+				}
+
 			}
 
-
-			if (abs(FRAME_HEIGHT/2 - theCentro.y) > 0) {
-				theTiltMsg.data = -(FRAME_HEIGHT/2 - theCentro.y)*(0.2*PI/FRAME_HEIGHT);
-				cout << "Publishing Tilt " << thePanMsg.data << endl;
-				theTiltPublisher.publish(theTiltMsg);
-			}
-
-			usleep(100000);
-
+			//usleep(100000);
 
 		}
 
 		// Mostramos por pantalla la imagen modificada con la información de detección
 
-		imshow("Video", theUndistortedFrame);
-
-
+		imshow("Video", theFrame);
 
 		// Pausa hasta que el usuario pulse tecla
 
-		waitKey(20);
+		waitKey(50);
 
 		ros::spinOnce();
+
+		theFrameCounter++;
 
 	}
 
@@ -292,3 +346,12 @@ string intToString(int number) {
 	return ss.str();
 
 }
+
+string floatToString(float number) {
+
+	std::stringstream ss;
+	ss << number;
+	return ss.str();
+
+}
+
