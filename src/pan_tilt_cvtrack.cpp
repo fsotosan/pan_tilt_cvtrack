@@ -14,6 +14,8 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <ros/ros.h>
 #include <std_msgs/Float64.h>
+#include <dynamixel_msgs/MotorStateList.h>
+#include <dynamixel_msgs/MotorState.h>
 
 #define PI 				3.1415927
 
@@ -25,10 +27,16 @@
 using namespace cv;
 using namespace std;
 
+double currentPanPosRad = 0.0;
+double currentTiltPosRad = 0.0;
+
 Mat colorFilter(const Mat* src, Scalar inColorMinHSV, Scalar inColorMaxHSV);
 vector< vector<Point> > findObjects(Mat* inFrame, Scalar inColorMinHSV, Scalar inColorMaxHSV, Point2f* outLargestMatchCenter, float* outLargestMatchArea);
 string intToString(int number);
 string floatToString(float number);
+double digiPos2Deg(int inPos);
+
+bool IsTracking = false;
 
 Scalar HsvMin;
 Scalar HsvMax;
@@ -43,6 +51,8 @@ void onHsvSMin(int theSliderValue,void*) { HsvMin[1] = theSliderValue*255/100; }
 void onHsvSMax(int theSliderValue,void*) { HsvMax[1] = theSliderValue*255/100; }
 void onHsvVMin(int theSliderValue,void*) { HsvMin[2] = theSliderValue*255/100; }
 void onHsvVMax(int theSliderValue,void*) { HsvMax[2] = theSliderValue*255/100; }
+
+void motorStatesCallback(const dynamixel_msgs::MotorStateList& inMsg);
 
 int theFrameCounter = 0;
 
@@ -68,9 +78,9 @@ int main( int argc, char** argv ) {
 	theCalibrationFile.release();
 	*/
 
-	float theCM[] = {1247.1132043625, 0, 268.031780862028, 0, 1245.77083050807, 197.854525292817, 0, 0, 1};
-	float theDC[] = {0.156027008694038, 0.414861176927745, -0.00461630436049559, -0.012986972246621, 0};
-	float thePC[] = {1268.92993164062, 0, 265.47622626249, 0, 0, 1268.49304199219, 197.223631488687, 0, 0, 0, 1, 0};
+	float theCM[] = {1107.46545955351, 0, 321.746543160967, 0, 1109.96438787448, 291.303399490763, 0, 0, 1};
+	float theDC[] = {-0.0974330899674774, 0.479179593078898, 0.0207048507870403, 0.00531414762112178, 0};
+	float thePC[] = {1102.72436035156, 0, 322.944612208022, 0, 0, 1098.22875, 295.148907870075, 0, 0, 0, 1, 0};
 
 	Mat theCameraMatrix =  Mat(3, 3, CV_32F, theCM).clone();
 	Mat theDistCoeffs = Mat(1, 5, CV_32F, theDC).clone();
@@ -104,6 +114,7 @@ int main( int argc, char** argv ) {
 	ros::NodeHandle theNodeHandle;
 	ros::Publisher theTiltPublisher = theNodeHandle.advertise<std_msgs::Float64>("/tilt_joint/command",10);
 	ros::Publisher thePanPublisher = theNodeHandle.advertise<std_msgs::Float64>("/pan_joint/command",10);
+	ros::Subscriber theMotorStatesSubscriber = theNodeHandle.subscribe("/motor_states/pan_tilt_port", 10, motorStatesCallback);
 
 	thePanMsg.data = 0.0;
 	thePanPublisher.publish(thePanMsg);
@@ -122,6 +133,9 @@ int main( int argc, char** argv ) {
 	createTrackbar("V min", "Video", NULL, 100, &onHsvVMin);
 	createTrackbar("V max", "Video", NULL, 100, &onHsvVMax);
 
+
+	//createButton("Track",&onChkTrackChanged,NULL,CV_CHECKBOX,0); // Qt NO soportado por la instalación de OpenCV de ROS
+
 	setTrackbarPos("H min", "Video", 213);
 	setTrackbarPos("H max", "Video", 322);
 	setTrackbarPos("S min", "Video", 12);
@@ -129,18 +143,25 @@ int main( int argc, char** argv ) {
 	setTrackbarPos("V min", "Video", 17);
 	setTrackbarPos("V max", "Video", 100);
 
-	ros::Rate r(10); // 10 hz
+	float theLoopRate = 30;
+
+	//int theRefCenterX = (int)cx;
+	int theRefCenterX = FRAME_WIDTH/2;
+	//int theRefCenterY = (int)cy;
+	int theRefCenterY = FRAME_HEIGHT/2;
+
+	ros::Rate theRosRate(theLoopRate); // 30 hz
 
 	while(theNodeHandle.ok()) {
 
 		// Obtenemos una imagen
 
-		theCapture >> theFrame2;
+		theCapture >> theFrame;
 
 		// Corregimos la imagen a partir de los parámetros de calibración conocidos
 
 		//undistort(theFrame2, theFrame, theCameraMatrix, theDistCoeffs);
-		theFrame = theFrame2.clone();
+		//theFrame = theFrame2.clone();
 
 		// Ejecutamos función de detección.
 		// La función devolverá un vector de contornos con todos los candidatos
@@ -160,8 +181,8 @@ int main( int argc, char** argv ) {
 			line(theFrame,Point(theCentro.x, theCentro.y-10), Point(theCentro.x, theCentro.y+10), theTargetIndicatorColor);
 
 			// Señalar el centro cx,cy con una cruz
-			line(theFrame,Point(cx-10, cy), Point(cx+10, cy), Scalar(0,0,0));
-			line(theFrame,Point(cx, cy-10), Point(cx, cy+10), Scalar(0,0,0));
+			line(theFrame,Point(theRefCenterX-10, theRefCenterY), Point(theRefCenterX+10, theRefCenterY), Scalar(0,0,0));
+			line(theFrame,Point(theRefCenterX, theRefCenterY-10), Point(theRefCenterX, theRefCenterY+10), Scalar(0,0,0));
 			//line(theFrame,Point(FRAME_WIDTH/2-10, FRAME_HEIGHT/2), Point(FRAME_WIDTH/2+10, FRAME_HEIGHT/2), Scalar(0,0,0));
 			//line(theFrame,Point(FRAME_WIDTH/2, FRAME_HEIGHT/2-10), Point(FRAME_WIDTH/2, FRAME_HEIGHT/2+10), Scalar(0,0,0));
 
@@ -187,40 +208,44 @@ int main( int argc, char** argv ) {
 			// Ajuste del ángulo PAN
 			// a partir de la coordenada X y los parámetros cx y fx: atan2(x-cx,fx)
 
+			double thePanCorrection = -atan2(theCentro.x-theRefCenterX,fx);
+
+			thePanMsg.data = currentPanPosRad + thePanCorrection;
+			//thePanMsg.data = -atan2(theCentro.x-FRAME_WIDTH/2,fx);
+			putText(theFrame,"PAN: "+intToString(round(thePanCorrection*180/PI)),Point(FRAME_WIDTH/2 - 20, 10),1,1,Scalar(0,255,0),2);
+
 			// Ajuste del ángulo TILT
 			// a partir de la coordenada Y y los parámetros cy y fx: atan2(y-cy,fy)
 
-			// Limitar a una acción de control cada 10 frames para no saturar el bus de motores
-			if (theFrameCounter >= 10) {
+			double theTiltCorrection = atan2(theCentro.y-theRefCenterY,fy);
+
+			theTiltMsg.data = currentTiltPosRad + theTiltCorrection;
+
+			//theTiltMsg.data = atan2(theCentro.y-FRAME_HEIGHT/2,fy);
+			putText(theFrame,"TILT: "+intToString(round(theTiltCorrection*180/PI)),Point(10,FRAME_HEIGHT/2 - 20),1,1,Scalar(0,255,0),2);
+
+			// Indicar si estamos en modo tracking
+
+			if (IsTracking) putText(theFrame,"TRACKING",Point(FRAME_WIDTH - 100, FRAME_HEIGHT - 10),1,1,Scalar(0,255,0),2);
+
+			// Limitar las acciones de control para no saturar el bus de motores
+
+			if (theFrameCounter >= 5) {
 
 				theFrameCounter = 0;
 
-				if (abs((int)cx - (int)theCentro.x) > 25) {
-					thePanMsg.data = -atan2(theCentro.x-cx,fx);
-					//thePanMsg.data = -atan2(theCentro.x-FRAME_WIDTH/2,fx);
-					//thePanMsg.data = - 0.9*atan2(theCentro.x-FRAME_WIDTH/2,fx);
-					//cout << "Publishing Pan " << thePanMsg.data << endl;
-					putText(theFrame,"PAN: "+floatToString(thePanMsg.data),Point(FRAME_WIDTH/2 - 20, 10),1,1,Scalar(0,255,0),2);
+				if ((IsTracking)&&(abs(theRefCenterX - (int)theCentro.x) > FRAME_WIDTH/20)) {
+					ROS_INFO_STREAM("Comando PAN: " << thePanMsg.data << " rad / " << round(thePanMsg.data*180/PI) << " grados aprox.");
 					thePanPublisher.publish(thePanMsg);
 					usleep(200000);
-
 				}
 
-
-				if (abs((int)cy - (int)theCentro.y) > 25) {
-					theTiltMsg.data = atan2(theCentro.y-cy,fy);
-					//theTiltMsg.data = atan2(theCentro.y-FRAME_HEIGHT/2,fy);
-					//theTiltMsg.data = 0.9*atan2(theCentro.y-FRAME_HEIGHT/2,fy);
-					//cout << "Publishing Tilt " << thePanMsg.data << endl;
-					putText(theFrame,"TILT: "+floatToString(thePanMsg.data),Point(10,FRAME_HEIGHT/2 - 20),1,1,Scalar(0,255,0),2);
+				if ((IsTracking)&&(abs(theRefCenterY - (int)theCentro.y) > FRAME_HEIGHT/20)) {
+					ROS_INFO_STREAM("Comando TILT: " << theTiltMsg.data << " rad / " << round(theTiltMsg.data*180/PI) << " grados aprox.");
 					theTiltPublisher.publish(theTiltMsg);
-					//usleep(100000);
-
 				}
 
 			}
-
-			//usleep(100000);
 
 		}
 
@@ -228,13 +253,19 @@ int main( int argc, char** argv ) {
 
 		imshow("Video", theFrame);
 
-		// Pausa hasta que el usuario pulse tecla
+		// Pausa hasta que el usuario pulse tecla o transcurran 20 milisegundos
+		// Solo importa la letra 't' para hacer un toggle del modo tracking
+		if (waitKey(1000/theLoopRate) == 116) {
+			IsTracking = (IsTracking)?false:true;
+		}
 
-		waitKey(50);
+		theRosRate.sleep();
 
 		ros::spinOnce();
 
 		theFrameCounter++;
+
+
 
 	}
 
@@ -352,6 +383,45 @@ string floatToString(float number) {
 	std::stringstream ss;
 	ss << number;
 	return ss.str();
+
+}
+
+double digiPos2Deg(int inPos) {
+
+	return -150.0 + (float)inPos*300.0/1023.0;
+
+}
+
+void motorStatesCallback(const dynamixel_msgs::MotorStateList& inMsg) {
+
+	static int i = 0;
+
+	// Descartamos 9 de cada 10 mensajes para no ralentizar el proceso
+	if (i >= 10) {
+
+		i = 0;
+
+		for(int i=0;i<2;i++) {
+			dynamixel_msgs::MotorState theMotorState = inMsg.motor_states[i];
+			float thePosDeg = digiPos2Deg(theMotorState.position);
+			float thePosRad = thePosDeg*PI/180.0;
+			float theGoalDeg = digiPos2Deg(theMotorState.goal);
+			float theGoalRad = theGoalDeg*PI/180.0;
+			int isMoving = theMotorState.moving;
+			string theMotorName = (i==0)?"PAN":"TILT";
+
+			if (i==0) {
+				currentPanPosRad = thePosRad;
+			} else {
+				currentTiltPosRad = thePosRad;
+			}
+
+			ROS_INFO_STREAM("Motor " << theMotorName << ". Pos actual: " << thePosRad << " rad (" << thePosDeg << " grados). Goal: " << theGoalRad << " rad ( " << theGoalDeg << " grados). " << ((isMoving == 0)?"Parado":"En movimiento"));
+		}
+
+	}
+
+	i++;
 
 }
 
